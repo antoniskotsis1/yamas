@@ -10,28 +10,62 @@ export default function Nav() {
   const [active, setActive] = useState('')
   const navRef = useRef<HTMLElement>(null)
   const burgerRef = useRef<HTMLButtonElement>(null)
+  // while a clicked link's smooth scroll is running, the spy stays quiet
+  const lockRef = useRef<{ timer: number } | null>(null)
 
-  // header border/shadow once the page is scrolled
+  // header border/shadow + scroll-spy, computed once per frame.
+  // The spy picks the last section whose top has passed ~35% of the viewport, so exactly one
+  // link is active at a time (the old IntersectionObserver band flipped between neighbours).
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 8)
-    onScroll()
+    let frame = 0
+    const update = () => {
+      frame = 0
+      setScrolled(window.scrollY > 8)
+      if (lockRef.current) return
+      const line = window.innerHeight * 0.35
+      let current = ''
+      for (const { id } of nav) {
+        const el = document.getElementById(id)
+        if (el && el.getBoundingClientRect().top <= line) current = id
+      }
+      // at the very bottom the last (short) section may never reach the line
+      const atBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2
+      if (atBottom && current) current = nav[nav.length - 1].id
+      setActive(current)
+    }
+    const onScroll = () => {
+      if (!frame) frame = requestAnimationFrame(update)
+    }
+    const unlock = () => {
+      if (!lockRef.current) return
+      clearTimeout(lockRef.current.timer)
+      lockRef.current = null
+      onScroll()
+    }
+    update()
     window.addEventListener('scroll', onScroll, { passive: true })
-    return () => window.removeEventListener('scroll', onScroll)
+    window.addEventListener('resize', onScroll, { passive: true })
+    window.addEventListener('scrollend', unlock)
+    return () => {
+      cancelAnimationFrame(frame)
+      window.removeEventListener('scroll', onScroll)
+      window.removeEventListener('resize', onScroll)
+      window.removeEventListener('scrollend', unlock)
+      if (lockRef.current) clearTimeout(lockRef.current.timer)
+    }
   }, [])
 
-  // scroll-spy: underline the section currently in view
-  useEffect(() => {
-    if (!('IntersectionObserver' in window)) return
-    const io = new IntersectionObserver(
-      (entries) => entries.forEach((en) => en.isIntersecting && setActive(en.target.id)),
-      { rootMargin: '-45% 0px -50% 0px' },
-    )
-    nav.forEach(({ id }) => {
-      const el = document.getElementById(id)
-      if (el) io.observe(el)
-    })
-    return () => io.disconnect()
-  }, [])
+  const goTo = (id: string) => {
+    setOpen(false)
+    setActive(id)
+    if (lockRef.current) clearTimeout(lockRef.current.timer)
+    // fallback for browsers without `scrollend` (Safari < 18) or when no scroll happens
+    const timer = window.setTimeout(() => {
+      lockRef.current = null
+      window.dispatchEvent(new Event('scroll'))
+    }, 1200)
+    lockRef.current = { timer }
+  }
 
   // close the mobile menu on Escape or a click outside it
   useEffect(() => {
@@ -66,7 +100,7 @@ export default function Nav() {
               key={item.id}
               href={`#${item.id}`}
               aria-current={active === item.id ? 'true' : undefined}
-              onClick={() => setOpen(false)}
+              onClick={() => goTo(item.id)}
             >
               {t(item.label)}
             </a>
